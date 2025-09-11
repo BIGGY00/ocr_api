@@ -8,6 +8,7 @@ import time
 from pydantic import BaseModel
 from typing import List
 import logging
+import base64
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -24,6 +25,10 @@ class OCRResponse(BaseModel):
     results: List[OCRResult]
     processing_time: float
     status: str
+
+# Pydantic model for Base64 image request
+class Base64Image(BaseModel):
+    image_data: str
 
 # Cache the OCR model
 def load_model():
@@ -56,7 +61,7 @@ def img_resize(input_image: bytes, img_size: int = 1280) -> Image.Image:
         raise HTTPException(status_code=400, detail=f"Error processing image: {str(e)}")
 
 @app.post("/ocr", response_model=OCRResponse)
-async def perform_ocr(file: UploadFile = File(...), confidence_threshold: float = 0.3):
+async def perform_ocr_file(file: UploadFile = File(...), confidence_threshold: float = 0.3):
     try:
         if file.content_type not in ['image/png', 'image/jpeg', 'image/jpg']:
             raise HTTPException(status_code=400, detail="Invalid file type. Only PNG, JPG, JPEG allowed.")
@@ -92,6 +97,47 @@ async def perform_ocr(file: UploadFile = File(...), confidence_threshold: float 
     except Exception as e:
         logger.error(f"OCR processing failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"OCR processing failed: {str(e)}")
+
+# New endpoint for Base64 image
+@app.post("/ocr/base64", response_model=OCRResponse)
+async def perform_ocr_base64(image: Base64Image, confidence_threshold: float = 0.3):
+    try:
+        # Decode the Base64 string
+        try:
+            image_bytes = base64.b64decode(image.image_data)
+        except base64.binascii.Error:
+            raise HTTPException(status_code=400, detail="Invalid Base64 string.")
+
+        # Process the image
+        input_image = img_resize(image_bytes, 1280)
+        
+        # Perform OCR
+        t1 = time.perf_counter()
+        result = reader.readtext(np.array(input_image), detail=1)
+        t2 = time.perf_counter()
+        
+        # Filter results based on confidence threshold
+        result_data = [
+            {"text": text[1], "confidence": round(text[2], 2)}
+            for text in result if text[2] >= confidence_threshold
+        ]
+        
+        if not result_data:
+            return OCRResponse(
+                results=[],
+                processing_time=round(t2 - t1, 2),
+                status="No text detected above confidence threshold"
+            )
+        
+        return OCRResponse(
+            results=result_data,
+            processing_time=round(t2 - t1, 2),
+            status="success"
+        )
+
+    except Exception as e:
+        logger.error(f"Base64 OCR processing failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Base64 OCR processing failed: {str(e)}")
 
 @app.get("/health")
 async def health_check():
