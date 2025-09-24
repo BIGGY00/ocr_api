@@ -7,7 +7,18 @@ services:
     ports:
       - "8000:8000"
     
+    restart: always
+
     environment:
       - TYPHOON_API_KEY=${TYPHOON_API_KEY}
     
-    restart: always
+    networks:
+      - ocr_net
+
+networks:
+  ocr_net:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 10.10.10.0/24
